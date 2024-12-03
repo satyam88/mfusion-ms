@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dev-fusion-ms-deployment
+  namespace: dev
+  labels:
+    app: fusion-ms
+    env: dev
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 100%
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: fusion-ms
+      env: dev
+  template:
+    metadata:
+      labels:
+        app: fusion-ms
+        env: dev
+    spec:
+      serviceAccountName: dev-fusion-ms-sa
+      containers:
+        - name: fusion-ms
+          image: 559220132560.dkr.ecr.ap-south-1.amazonaws.com/fusion-ms-ms:latest
+          resources:
+            requests:
+              memory: 50Mi
+              cpu: 50m
+            limits:
+              memory: 100Mi
+              cpu: 500m
+          ports:
+            - containerPort: 8080
+              name: api
+          volumeMounts:
+            - mountPath: /app/config
+              name: application-config
+      volumes:
+        - name: application-config
+          configMap:
+            name: dev-fusion-ms-application-config
