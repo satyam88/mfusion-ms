@@ -120,10 +120,9 @@ pipeline {
                     def yamlFile = 'kubernetes/dev/05-deployment.yaml'
                     sh "sed -i 's/<latest>/dev-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Configure kubectl for dev environment (using the same cluster for all environments)
+                    // Use the kubeconfig file directly
                     sh """
-                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
-                        kubectl apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
                     """
                 }
             }
@@ -139,10 +138,9 @@ pipeline {
                     def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
                     sh "sed -i 's/<latest>/preprod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Configure kubectl for preprod environment (using the same cluster for all environments)
+                    // Use the kubeconfig file directly
                     sh """
-                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
-                        kubectl apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
                     """
                 }
             }
@@ -158,10 +156,9 @@ pipeline {
                     def yamlFile = 'kubernetes/prod/05-deployment.yaml'
                     sh "sed -i 's/<latest>/prod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Configure kubectl for prod environment (using the same cluster for all environments)
+                    // Use the kubeconfig file directly
                     sh """
-                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
-                        kubectl apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
                     """
                 }
             }
