@@ -8,7 +8,7 @@ pipeline {
         DEV_IMAGE_NAME = "satyam88/dev-mfusion-ms-v.1.${BUILD_NUMBER}"
         PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
         PROD_IMAGE_NAME = "prod-mfusion-ms-v.1.${BUILD_NUMBER}"
-        KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'
+        KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'  // Ensure this matches the correct credentials ID in Jenkins
     }
 
     options {
@@ -67,9 +67,9 @@ pipeline {
 
         stage('Docker Image Scanning') {
             steps {
-                echo 'Scanning Docker Image...'
+                echo 'Scanning Docker Image with Trivy...'
                 sh """
-                    docker scan ${DEV_IMAGE_NAME} || echo "Docker Image Scan Failed"
+                    trivy image ${DEV_IMAGE_NAME} || echo "Trivy Docker Image Scan Failed"
                 """
                 echo 'Docker Image Scan Completed!'
             }
@@ -77,7 +77,7 @@ pipeline {
 
         stage('Tag and Push Docker Images') {
             parallel {
-                stage('For Preprod') {
+                stage('Docker Image for Preprod Env') {
                     when { branch 'preprod' }
                     steps {
                         script {
@@ -90,7 +90,7 @@ pipeline {
                     }
                 }
 
-                stage('For Prod') {
+                stage('Docker Image for Prod Env') {
                     when { branch 'prod' }
                     steps {
                         script {
@@ -105,9 +105,9 @@ pipeline {
             }
         }
 
-        stage('Deployment') {
+        stage('Kubernetes Deployment') {
             parallel {
-                stage('To Development Environment') {
+                stage('Deploy App To Development Environment') {
                     when { branch 'dev' }
                     steps {
                         script {
@@ -116,7 +116,7 @@ pipeline {
                     }
                 }
 
-                stage('To Preprod Environment') {
+                stage('Deploy App To Preprod Environment') {
                     when { branch 'preprod' }
                     steps {
                         script {
@@ -125,7 +125,7 @@ pipeline {
                     }
                 }
 
-                stage('To Production Environment') {
+                stage('Deploy App To Prod Environment') {
                     when { branch 'prod' }
                     steps {
                         script {
@@ -152,10 +152,8 @@ def deployToKubernetes(namespace, yamlDir, imageName) {
     def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
     sh "sed -i 's|<latest>|${imageName}|g' ${yamlDir}/05-deployment.yaml"
 
-    withCredentials([
-        file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-        [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']
-    ]) {
+    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
+                     [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
         yamlFiles.each { yamlFile ->
             sh """
                 aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
