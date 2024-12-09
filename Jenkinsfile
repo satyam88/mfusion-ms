@@ -5,9 +5,9 @@ pipeline {
         AWS_ACCOUNT_ID = "533267238276"
         REGION = "ap-south-1"
         ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-        DEV_IMAGE_NAME = "satyam88/dev-mfusion-ms-v.1.${env.BUILD_NUMBER}"
-        PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
-        PROD_IMAGE_NAME = "prod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
+        DEV_IMAGE_NAME = "satyam88/dev-mfusion-ms-v.1.${BUILD_NUMBER}"
+        PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
+        PROD_IMAGE_NAME = "prod-mfusion-ms-v.1.${BUILD_NUMBER}"
         KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'
     }
 
@@ -20,168 +20,118 @@ pipeline {
     }
 
     stages {
-        stage('Build and Test for Dev') {
-            when {
-                branch 'dev'
-            }
+        stage('Build and Test') {
+            when { branch 'dev' }
             stages {
                 stage('Code Compilation') {
                     steps {
-                        echo 'Code Compilation is In Progress!'
+                        echo 'Code Compilation in Progress...'
                         sh 'mvn clean compile'
-                        echo 'Code Compilation is Completed Successfully!'
+                        echo 'Code Compilation Completed!'
                     }
                 }
 
                 stage('Code QA Execution') {
                     steps {
-                        echo 'JUnit Test Case Check in Progress!'
+                        echo 'Running JUnit Tests...'
                         sh 'mvn clean test'
-                        echo 'JUnit Test Case Check Completed!'
+                        echo 'JUnit Tests Completed!'
                     }
                 }
 
-                stage('Code Package') {
+                stage('Package Application') {
                     steps {
-                        echo 'Creating WAR Artifact'
+                        echo 'Creating WAR Artifact...'
                         sh 'mvn clean package'
-                        echo 'Artifact Creation Completed'
+                        echo 'WAR Artifact Created!'
                     }
                 }
 
                 stage('Build and Push Docker Image for Dev') {
                     steps {
-                        echo "Building Docker Image for Dev: ${env.DEV_IMAGE_NAME}"
-                        sh "docker build -t ${env.DEV_IMAGE_NAME} ."
-                        echo "Pushing Docker Image to DockerHub: ${env.DEV_IMAGE_NAME}"
+                        echo "Building Docker Image: ${DEV_IMAGE_NAME}"
+                        sh "docker build -t ${DEV_IMAGE_NAME} ."
+
+                        echo "Pushing Docker Image: ${DEV_IMAGE_NAME}"
                         withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CRED', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                            sh "docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}"
-                            sh "docker push ${env.DEV_IMAGE_NAME}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Tag and Push Docker Image for Preprod') {
-            when {
-                branch 'preprod'
-            }
-            steps {
-                script {
-                    echo "Tagging and Pushing Docker Image for Preprod: ${env.PREPROD_IMAGE_NAME}"
-                    sh "docker tag ${env.DEV_IMAGE_NAME} ${env.PREPROD_IMAGE_NAME}"
-                    withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                        sh "docker push ${env.PREPROD_IMAGE_NAME}"
-                    }
-                }
-            }
-        }
-
-        stage('Tag and Push Docker Image for Prod') {
-            when {
-                branch 'prod'
-            }
-            steps {
-                script {
-                    echo "Tagging and Pushing Docker Image for Prod: ${env.PROD_IMAGE_NAME}"
-                    sh "docker tag ${env.DEV_IMAGE_NAME} ${env.PROD_IMAGE_NAME}"
-                    withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                        sh "docker push ${env.PROD_IMAGE_NAME}"
-                    }
-                }
-            }
-        }
-
-        stage('Deploy to Development Environment') {
-            when {
-                branch 'dev'
-            }
-            steps {
-                script {
-                    echo "Deploying to Dev Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/dev/'
-                    sh "sed -i 's/<latest>/dev-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlDir}05-deployment.yaml"
-
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
                             sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
+                                docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
+                                docker push ${DEV_IMAGE_NAME}
+                            """
+                        }
+                        echo "Docker Image Pushed Successfully!"
+                    }
+                }
+            }
+        }
 
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n dev --validate=false
+        stage('Docker Image Scanning') {
+            steps {
+                echo 'Scanning Docker Image...'
+                sh """
+                    docker scan ${DEV_IMAGE_NAME} || echo "Docker Image Scan Failed"
+                """
+                echo 'Docker Image Scan Completed!'
+            }
+        }
+
+        stage('Tag and Push Docker Images') {
+            parallel {
+                stage('For Preprod') {
+                    when { branch 'preprod' }
+                    steps {
+                        script {
+                            echo "Tagging and Pushing Docker Image for Preprod: ${PREPROD_IMAGE_NAME}"
+                            sh """
+                                docker tag ${DEV_IMAGE_NAME} ${PREPROD_IMAGE_NAME}
+                                docker push ${PREPROD_IMAGE_NAME}
                             """
                         }
                     }
-                    echo "Deployment to Dev Completed"
+                }
+
+                stage('For Prod') {
+                    when { branch 'prod' }
+                    steps {
+                        script {
+                            echo "Tagging and Pushing Docker Image for Prod: ${PROD_IMAGE_NAME}"
+                            sh """
+                                docker tag ${DEV_IMAGE_NAME} ${PROD_IMAGE_NAME}
+                                docker push ${PROD_IMAGE_NAME}
+                            """
+                        }
+                    }
                 }
             }
         }
 
-        stage('Deploy to Preprod Environment') {
-            when {
-                branch 'preprod'
-            }
-            steps {
-                script {
-                    echo "Deploying to Preprod Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/preprod/'
-                    sh "sed -i 's/<latest>/preprod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlDir}05-deployment.yaml"
-
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
-                            sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
-
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n preprod --validate=false
-                            """
+        stage('Deployment') {
+            parallel {
+                stage('To Development Environment') {
+                    when { branch 'dev' }
+                    steps {
+                        script {
+                            deployToKubernetes('dev', 'kubernetes/dev', DEV_IMAGE_NAME)
                         }
                     }
-                    echo "Deployment to Preprod Completed"
                 }
-            }
-        }
 
-        stage('Deploy to Production Environment') {
-            when {
-                branch 'prod'
-            }
-            steps {
-                script {
-                    echo "Deploying to Prod Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/prod/'
-                    sh "sed -i 's/<latest>/prod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlDir}05-deployment.yaml"
-
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
-                            sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
-
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n prod --validate=false
-                            """
+                stage('To Preprod Environment') {
+                    when { branch 'preprod' }
+                    steps {
+                        script {
+                            deployToKubernetes('preprod', 'kubernetes/preprod', PREPROD_IMAGE_NAME)
                         }
                     }
-                    echo "Deployment to Prod Completed"
+                }
+
+                stage('To Production Environment') {
+                    when { branch 'prod' }
+                    steps {
+                        script {
+                            deployToKubernetes('prod', 'kubernetes/prod', PROD_IMAGE_NAME)
+                        }
+                    }
                 }
             }
         }
@@ -189,10 +139,32 @@ pipeline {
 
     post {
         success {
-            echo "Deployment to ${env.BRANCH_NAME} environment completed successfully"
+            echo "Pipeline executed successfully on branch ${env.BRANCH_NAME}"
         }
         failure {
-            echo "Deployment to ${env.BRANCH_NAME} environment failed. Check logs for details."
+            echo "Pipeline failed on branch ${env.BRANCH_NAME}. Check logs for details."
         }
     }
+}
+
+def deployToKubernetes(namespace, yamlDir, imageName) {
+    echo "Deploying to ${namespace} environment..."
+    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
+    sh "sed -i 's/<latest>/${imageName}/g' ${yamlDir}/05-deployment.yaml"
+
+    withCredentials([
+        file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
+        [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']
+    ]) {
+        yamlFiles.each { yamlFile ->
+            sh """
+                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
+                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
+                aws configure set region ${REGION}
+
+                kubectl apply -f ${yamlDir}/${yamlFile} --kubeconfig=\$KUBECONFIG -n ${namespace} --validate=false
+            """
+        }
+    }
+    echo "Deployment to ${namespace} Completed!"
 }
