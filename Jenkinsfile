@@ -150,7 +150,7 @@ pipeline {
 def deployToKubernetes(namespace, yamlDir, imageName) {
     echo "Deploying to ${namespace} environment..."
     def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-    sh "sed -i 's/<latest>/${imageName}/g' ${yamlDir}/05-deployment.yaml"
+    sh "sed -i 's|<latest>|${imageName}|g' ${yamlDir}/05-deployment.yaml"
 
     withCredentials([
         file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
