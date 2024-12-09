@@ -5,10 +5,12 @@ pipeline {
         AWS_ACCOUNT_ID = "533267238276"
         REGION = "ap-south-1"
         ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-        DEV_IMAGE_NAME = "satyam88/dev-mfusion-ms-v.1.${BUILD_NUMBER}"
-        PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
-        PROD_IMAGE_NAME = "prod-mfusion-ms-v.1.${BUILD_NUMBER}"
-        KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'  // Ensure this matches the correct credentials ID in Jenkins
+        DEV_IMAGE_NAME = "dev-mfusion-ms-v1.${BUILD_NUMBER}"
+        PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v1.${BUILD_NUMBER}"
+        PROD_IMAGE_NAME = "prod-mfusion-ms-v1.${BUILD_NUMBER}"
+        DEV_ECR_IMAGE_NAME = "${ECR_URL}/${DEV_IMAGE_NAME}"
+        PREPROD_ECR_IMAGE_NAME = "${ECR_URL}/${PREPROD_IMAGE_NAME}"
+        PROD_ECR_IMAGE_NAME = "${ECR_URL}/${PROD_IMAGE_NAME}"
     }
 
     options {
@@ -47,19 +49,11 @@ pipeline {
                     }
                 }
 
-                stage('Build and Push Docker Image for Dev') {
+                stage('Build Docker Image') {
                     steps {
-                        echo "Building Docker Image: ${DEV_IMAGE_NAME}"
-                        sh "docker build -t ${DEV_IMAGE_NAME} ."
-
-                        echo "Pushing Docker Image: ${DEV_IMAGE_NAME}"
-                        withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CRED', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                            sh """
-                                docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
-                                docker push ${DEV_IMAGE_NAME}
-                            """
-                        }
-                        echo "Docker Image Pushed Successfully!"
+                        echo "Building Docker Image: ${env.DEV_IMAGE_NAME}"
+                        sh "docker build -t ${env.DEV_IMAGE_NAME} ."
+                        echo "Docker Image Built Successfully!"
                     }
                 }
             }
@@ -68,68 +62,50 @@ pipeline {
         stage('Docker Image Scanning') {
             steps {
                 echo 'Scanning Docker Image with Trivy...'
-                sh """
-#                    trivy image ${DEV_IMAGE_NAME} || echo "Trivy Docker Image Scan Failed"
-                """
+                sh "trivy image ${env.DEV_ECR_IMAGE_NAME} || echo 'Trivy scan failed, continuing...'"
                 echo 'Docker Image Scan Completed!'
             }
         }
 
-        stage('Tag and Push Docker Images') {
-            parallel {
-                stage('Docker Image for Preprod Env') {
-                    when { branch 'preprod' }
-                    steps {
-                        script {
-                            echo "Tagging and Pushing Docker Image for Preprod: ${PREPROD_IMAGE_NAME}"
-                            sh """
-                                docker tag ${DEV_IMAGE_NAME} ${PREPROD_IMAGE_NAME}
-                                docker push ${PREPROD_IMAGE_NAME}
-                            """
-                        }
-                    }
-                }
+        stage('Docker Image Push to Amazon ECR') {
+            steps {
+                echo "Tagging Docker Image for ECR: ${env.DEV_ECR_IMAGE_NAME}"
+                sh "docker tag ${env.DEV_IMAGE_NAME} ${env.DEV_ECR_IMAGE_NAME}"
+                echo "Docker Image Tagging Completed"
 
-                stage('Docker Image for Prod Env') {
-                    when { branch 'prod' }
-                    steps {
-                        script {
-                            echo "Tagging and Pushing Docker Image for Prod: ${PROD_IMAGE_NAME}"
-                            sh """
-                                docker tag ${DEV_IMAGE_NAME} ${PROD_IMAGE_NAME}
-                                docker push ${PROD_IMAGE_NAME}
-                            """
-                        }
-                    }
+                withDockerRegistry([credentialsId: 'ecr-credentials', url: "https://${ECR_URL}"]) {
+                    echo "Pushing Docker Image to ECR: ${env.DEV_ECR_IMAGE_NAME}"
+                    sh "docker push ${env.DEV_ECR_IMAGE_NAME}"
+                    echo "Docker Image Push to ECR Completed"
                 }
             }
         }
 
         stage('Kubernetes Deployment') {
             parallel {
-                stage('Deploy App To Development Environment') {
+                stage('Deploy to Development') {
                     when { branch 'dev' }
                     steps {
                         script {
-                            deployToKubernetes('dev', 'kubernetes/dev', DEV_IMAGE_NAME)
+                            deployToKubernetes('dev', 'kubernetes/dev', env.DEV_ECR_IMAGE_NAME)
                         }
                     }
                 }
 
-                stage('Deploy App To Preprod Environment') {
+                stage('Deploy to Preprod') {
                     when { branch 'preprod' }
                     steps {
                         script {
-                            deployToKubernetes('preprod', 'kubernetes/preprod', PREPROD_IMAGE_NAME)
+                            deployToKubernetes('preprod', 'kubernetes/preprod', env.PREPROD_ECR_IMAGE_NAME)
                         }
                     }
                 }
 
-                stage('Deploy App To Prod Environment') {
+                stage('Deploy to Prod') {
                     when { branch 'prod' }
                     steps {
                         script {
-                            deployToKubernetes('prod', 'kubernetes/prod', PROD_IMAGE_NAME)
+                            deployToKubernetes('prod', 'kubernetes/prod', env.PROD_ECR_IMAGE_NAME)
                         }
                     }
                 }
@@ -152,13 +128,13 @@ def deployToKubernetes(namespace, yamlDir, imageName) {
     def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
     sh "sed -i 's|<latest>|${imageName}|g' ${yamlDir}/05-deployment.yaml"
 
-    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
+    withCredentials([file(credentialsId: 'kubeconfig-aws-aks-k8s-cluster', variable: 'KUBECONFIG'),
                      [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
         yamlFiles.each { yamlFile ->
             sh """
                 aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
                 aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                aws configure set region ${REGION}
+                aws configure set region ${env.REGION}
 
                 kubectl apply -f ${yamlDir}/${yamlFile} --kubeconfig=\$KUBECONFIG -n ${namespace} --validate=false
             """
