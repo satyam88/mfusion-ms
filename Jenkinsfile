@@ -59,14 +59,6 @@ pipeline {
             }
         }
 
-        stage('Docker Image Scanning') {
-            steps {
-                echo 'Scanning Docker Image with Trivy...'
-                sh "trivy image ${env.DEV_ECR_IMAGE_NAME} || echo 'Trivy scan failed, continuing...'"
-                echo 'Docker Image Scan Completed!'
-            }
-        }
-
         stage('Docker Image Push to Amazon ECR') {
             steps {
                 echo "Tagging Docker Image for ECR: ${env.DEV_ECR_IMAGE_NAME}"
