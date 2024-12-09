@@ -8,7 +8,7 @@ pipeline {
         BRANCH_NAME = "${env.BRANCH_NAME}"
         BUILD_NUMBER = "${env.BUILD_NUMBER}"
         ECR_IMAGE_NAME = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
-        EKS_CLUSTER = "fusion-k8s-cluster"  // Set your EKS cluster name
+        IMAGE_TAG = "${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
     }
 
     options {
@@ -79,7 +79,7 @@ pipeline {
             }
             steps {
                 script {
-                    def devImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
+                    def devImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${IMAGE_TAG}"
 
                     if (env.BRANCH_NAME == 'preprod') {
                         def preprodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
@@ -118,12 +118,23 @@ pipeline {
                 script {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/dev/05-deployment.yaml'
-                    sh "sed -i 's/<latest>/dev-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Use the kubeconfig file directly
+                    // Update image tag in the deployment.yaml file
+                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+
+                    // Apply all files in the kubernetes/dev/ directory
                     sh """
-                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/dev/
                     """
+
+                    // Check if 06-configmap.yaml has changed, and restart pods if needed
+                    def configMapChanges = sh(script: "git diff --name-only HEAD~1 | grep 'kubernetes/dev/06-configmap.yaml'", returnStatus: true)
+                    if (configMapChanges == 0) {
+                        echo "ConfigMap changed, restarting pods"
+                        sh """
+                            kubectl --kubeconfig=/var/lib/jenkins/.kube/config rollout restart deployment <your-deployment-name> -n <namespace>
+                        """
+                    }
                 }
             }
         }
@@ -136,11 +147,13 @@ pipeline {
                 script {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
-                    sh "sed -i 's/<latest>/preprod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Use the kubeconfig file directly
+                    // Pass the image tag to preprod deployment
+                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+
+                    // Apply all files in the kubernetes/preprod/ directory
                     sh """
-                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/preprod/
                     """
                 }
             }
@@ -154,11 +167,13 @@ pipeline {
                 script {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/prod/05-deployment.yaml'
-                    sh "sed -i 's/<latest>/prod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
 
-                    // Use the kubeconfig file directly
+                    // Pass the image tag to prod deployment
+                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+
+                    // Apply all files in the kubernetes/prod/ directory
                     sh """
-                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f ${yamlFile}
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/prod/
                     """
                 }
             }
