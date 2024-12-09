@@ -6,7 +6,9 @@ pipeline {
         REGION = "ap-south-1"
         ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
         BRANCH_NAME = "${env.BRANCH_NAME}"
-        ECR_IMAGE_NAME = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:dev-mfusion-ms-v.1.${env.BUILD_NUMBER}"
+        BUILD_NUMBER = "${env.BUILD_NUMBER}"
+        ECR_IMAGE_NAME = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
+        EKS_CLUSTER = "fusion-k8s-cluster"  // Set your EKS cluster name
     }
 
     options {
@@ -15,7 +17,6 @@ pipeline {
 
     tools {
         maven 'maven_3.9.4'
-        // sonarqubeScanner 'sonarqube-scanner'
     }
 
     stages {
@@ -50,21 +51,18 @@ pipeline {
 
                 stage('Building & Tag Docker Image') {
                     steps {
-                        echo "Starting Building Docker Image: ${env.IMAGE_NAME}"
-                        sh "docker build -t ${env.IMAGE_NAME} ."
+                        echo "Starting Building Docker Image: ${ECR_IMAGE_NAME}"
+                        sh "docker build -t ${ECR_IMAGE_NAME} ."
                         echo 'Docker Image Build Completed'
                     }
                 }
 
                 stage('Docker Image Push to Amazon ECR') {
                     steps {
-                        echo "Tagging Docker Image for ECR: ${env.ECR_IMAGE_NAME}"
-                        sh "docker tag ${env.IMAGE_NAME} ${env.ECR_IMAGE_NAME}"
-                        echo "Docker Image Tagging Completed"
-
+                        echo "Tagging Docker Image for ECR: ${ECR_IMAGE_NAME}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                            echo "Pushing Docker Image to ECR: ${env.ECR_IMAGE_NAME}"
-                            sh "docker push ${env.ECR_IMAGE_NAME}"
+                            echo "Pushing Docker Image to ECR: ${ECR_IMAGE_NAME}"
+                            sh "docker push ${ECR_IMAGE_NAME}"
                             echo "Docker Image Push to ECR Completed"
                         }
                     }
@@ -81,17 +79,17 @@ pipeline {
             }
             steps {
                 script {
-                    def devImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:dev-mfusion-ms-v.1.${env.BUILD_NUMBER}"
-                    def preprodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:preprod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
-                    def prodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:prod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
+                    def devImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
 
                     if (env.BRANCH_NAME == 'preprod') {
+                        def preprodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
                         echo "Tagging and Pushing Docker Image for Preprod: ${preprodImage}"
                         sh "docker tag ${devImage} ${preprodImage}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
                             sh "docker push ${preprodImage}"
                         }
                     } else if (env.BRANCH_NAME == 'prod') {
+                        def prodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:prod-mfusion-ms-v.1.${BUILD_NUMBER}"
                         echo "Tagging and Pushing Docker Image for Prod: ${prodImage}"
                         sh "docker tag ${devImage} ${prodImage}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
@@ -105,10 +103,8 @@ pipeline {
         stage('Delete Local Docker Images') {
             steps {
                 script {
-                    echo "Deleting Local Docker Images: ${env.IMAGE_NAME} ${env.ECR_IMAGE_NAME}"
-                    // Ensure each image name is checked for null before attempting deletion
-                    sh "docker rmi ${env.IMAGE_NAME} || true"
-                    sh "docker rmi ${env.ECR_IMAGE_NAME} || true"
+                    echo "Deleting Local Docker Images: ${ECR_IMAGE_NAME}"
+                    sh "docker rmi ${ECR_IMAGE_NAME} || true"
                     echo "Local Docker Images Deletion Completed"
                 }
             }
@@ -123,7 +119,12 @@ pipeline {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/dev/05-deployment.yaml'
                     sh "sed -i 's/<latest>/dev-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
-                    kubernetesDeploy(configs: 'kubernetes/dev/*.yaml', kubeconfigId: 'k8s-credentials')
+
+                    // Configure kubectl for dev environment (using the same cluster for all environments)
+                    sh """
+                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
+                        kubectl apply -f ${yamlFile}
+                    """
                 }
             }
         }
@@ -137,7 +138,12 @@ pipeline {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
                     sh "sed -i 's/<latest>/preprod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
-                    kubernetesDeploy(configs: 'kubernetes/preprod/*.yaml', kubeconfigId: 'k8s-credentials')
+
+                    // Configure kubectl for preprod environment (using the same cluster for all environments)
+                    sh """
+                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
+                        kubectl apply -f ${yamlFile}
+                    """
                 }
             }
         }
@@ -151,7 +157,12 @@ pipeline {
                     echo "Current Branch: ${env.BRANCH_NAME}"
                     def yamlFile = 'kubernetes/prod/05-deployment.yaml'
                     sh "sed -i 's/<latest>/prod-mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlFile}"
-                    kubernetesDeploy(configs: 'kubernetes/prod/*.yaml', kubeconfigId: 'k8s-credentials')
+
+                    // Configure kubectl for prod environment (using the same cluster for all environments)
+                    sh """
+                        aws eks update-kubeconfig --region ${REGION} --name ${EKS_CLUSTER}
+                        kubectl apply -f ${yamlFile}
+                    """
                 }
             }
         }
