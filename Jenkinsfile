@@ -5,7 +5,7 @@ pipeline {
         AWS_ACCOUNT_ID = "533267238276"
         REGION = "ap-south-1"
         ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-        DEV_IMAGE_NAME = "dev-mfusion-ms-v.1.${env.BUILD_NUMBER}"
+        DEV_IMAGE_NAME = "satyam88/dev-mfusion-ms-v.1.${env.BUILD_NUMBER}"
         PREPROD_IMAGE_NAME = "preprod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
         PROD_IMAGE_NAME = "prod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
         KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'
