@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: dev-fusion-ms-application-config
+  name: dev-mfusion-ms-application-config
   namespace: dev
   labels:
     env: dev
-    app: fusion-ms-ms
+    app: mfusion-ms
     layer: frontend
 data:
   application.properties: |
