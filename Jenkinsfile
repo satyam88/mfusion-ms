@@ -5,9 +5,10 @@ pipeline {
         AWS_ACCOUNT_ID = "533267238276"
         REGION = "ap-south-1"
         ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-        IMAGE_NAME = "satyam88/mfusion-ms:mfusion-ms-v.1.${env.BUILD_NUMBER}"
-        ECR_IMAGE_NAME = "${ECR_URL}/mfusion-ms:mfusion-ms-v.1.${env.BUILD_NUMBER}"
-        KUBECONFIG_ID = 'kubeconfig-aws-aks-k8s-cluster'
+        BRANCH_NAME = "${env.BRANCH_NAME}"
+        BUILD_NUMBER = "${env.BUILD_NUMBER}"
+        ECR_IMAGE_NAME = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
+        IMAGE_TAG = "${BRANCH_NAME}-mfusion-ms-v.1.${BUILD_NUMBER}"
     }
 
     options {
@@ -50,32 +51,18 @@ pipeline {
 
                 stage('Building & Tag Docker Image') {
                     steps {
-                        echo "Starting Building Docker Image: ${env.IMAGE_NAME}"
-                        sh "docker build -t ${env.IMAGE_NAME} ."
+                        echo "Starting Building Docker Image: ${ECR_IMAGE_NAME}"
+                        sh "docker build -t ${ECR_IMAGE_NAME} ."
                         echo 'Docker Image Build Completed'
-                    }
-                }
-
-                stage('Docker Push to Docker Hub') {
-                    steps {
-                        withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB_CRED', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                            echo "Pushing Docker Image to DockerHub: ${env.IMAGE_NAME}"
-                            sh "docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}"
-                            sh "docker push ${env.IMAGE_NAME}"
-                            echo "Docker Image Push to DockerHub Completed"
-                        }
                     }
                 }
 
                 stage('Docker Image Push to Amazon ECR') {
                     steps {
-                        echo "Tagging Docker Image for ECR: ${env.ECR_IMAGE_NAME}"
-                        sh "docker tag ${env.IMAGE_NAME} ${env.ECR_IMAGE_NAME}"
-                        echo "Docker Image Tagging Completed"
-
+                        echo "Tagging Docker Image for ECR: ${ECR_IMAGE_NAME}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                            echo "Pushing Docker Image to ECR: ${env.ECR_IMAGE_NAME}"
-                            sh "docker push ${env.ECR_IMAGE_NAME}"
+                            echo "Pushing Docker Image to ECR: ${ECR_IMAGE_NAME}"
+                            sh "docker push ${ECR_IMAGE_NAME}"
                             echo "Docker Image Push to ECR Completed"
                         }
                     }
@@ -92,17 +79,17 @@ pipeline {
             }
             steps {
                 script {
-                    def devImage = "satyam88/mfusion-ms:mfusion-ms-v.1.${env.BUILD_NUMBER}"
-                    def preprodImage = "${ECR_URL}/mfusion-ms:preprod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
-                    def prodImage = "${ECR_URL}/mfusion-ms:prod-mfusion-ms-v.1.${env.BUILD_NUMBER}"
+                    def devImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:${IMAGE_TAG}"
 
                     if (env.BRANCH_NAME == 'preprod') {
+                        def preprodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:preprod-mfusion-ms-v.1.${BUILD_NUMBER}"
                         echo "Tagging and Pushing Docker Image for Preprod: ${preprodImage}"
                         sh "docker tag ${devImage} ${preprodImage}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
                             sh "docker push ${preprodImage}"
                         }
                     } else if (env.BRANCH_NAME == 'prod') {
+                        def prodImage = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/mfusion-ms:prod-mfusion-ms-v.1.${BUILD_NUMBER}"
                         echo "Tagging and Pushing Docker Image for Prod: ${prodImage}"
                         sh "docker tag ${devImage} ${prodImage}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
@@ -116,106 +103,89 @@ pipeline {
         stage('Delete Local Docker Images') {
             steps {
                 script {
-                    echo "Deleting Local Docker Images: ${env.IMAGE_NAME} ${env.ECR_IMAGE_NAME}"
-                    sh "docker rmi ${env.IMAGE_NAME} || true"
-                    sh "docker rmi ${env.ECR_IMAGE_NAME} || true"
+                    echo "Deleting Local Docker Images: ${ECR_IMAGE_NAME}"
+                    sh "docker rmi ${ECR_IMAGE_NAME} || true"
                     echo "Local Docker Images Deletion Completed"
                 }
             }
         }
 
-        stage('Deploy to Development Environment') {
+        stage('Deploy app to dev env') {
             when {
                 branch 'dev'
             }
             steps {
                 script {
-                    echo "Deploying to Dev Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/dev/'
-                    // Replace <latest> in dev environment only
-                    sh "sed -i 's/<latest>/mfusion-ms-v.1.${BUILD_NUMBER}/g' ${yamlDir}05-deployment.yaml"
+                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    def yamlFile = 'kubernetes/dev/05-deployment.yaml'
 
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
-                            sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
+                    // Update image tag in the deployment.yaml file
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n dev --validate=false
-                            """
-                        }
+                    // Apply all files in the kubernetes/dev/ directory
+                    sh """
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/dev/
+                    """
+
+                    // Check if 06-configmap.yaml has changed, and restart pods if needed
+                    def configMapChanged = sh(script: "git diff --name-only HEAD~1 | grep -q 'kubernetes/dev/06-configmap.yaml'", returnStatus: true)
+                    if (configMapChanged == 0) {
+                        echo "ConfigMap changed, restarting pods"
+                        sh """
+                            kubectl --kubeconfig=/var/lib/jenkins/.kube/config rollout restart deployment dev-mfusion-ms-deployment -n dev
+                        """
+                    } else {
+                        echo "No changes in ConfigMap, skipping pod restart"
                     }
-                    echo "Deployment to Dev Completed"
                 }
             }
         }
 
-        stage('Deploy to Preprod Environment') {
+        stage('Deploy app to preprod env') {
             when {
                 branch 'preprod'
             }
             steps {
                 script {
-                    echo "Deploying to Preprod Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/preprod/'
+                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
 
-                    // No sed command for preprod, manual update will be applied
+                    // Pass the image tag to preprod deployment
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
-                            sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
-
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n preprod --validate=false
-                            """
-                        }
-                    }
-                    echo "Deployment to Preprod Completed"
+                    // Apply all files in the kubernetes/preprod/ directory
+                    sh """
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/preprod/
+                    """
                 }
             }
         }
 
-        stage('Deploy to Production Environment') {
+        stage('Deploy app to prod env') {
             when {
                 branch 'prod'
             }
             steps {
                 script {
-                    echo "Deploying to Prod Environment"
-                    def yamlFiles = ['00-ingress.yaml', '02-service.yaml', '03-service-account.yaml', '05-deployment.yaml', '06-configmap.yaml', '09.hpa.yaml']
-                    def yamlDir = 'kubernetes/prod/'
+                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    def yamlFile = 'kubernetes/prod/05-deployment.yaml'
 
-                    // No sed command for prod, manual update will be applied
+                    // Pass the image tag to prod deployment
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
-                    withCredentials([file(credentialsId: KUBECONFIG_ID, variable: 'KUBECONFIG'),
-                                     [$class: 'AmazonWebServicesCredentialsBinding',
-                                      credentialsId: 'aws-credentials',
-                                      accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                                      secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        yamlFiles.each { yamlFile ->
-                            sh """
-                                aws configure set aws_access_key_id \$AWS_ACCESS_KEY_ID
-                                aws configure set aws_secret_access_key \$AWS_SECRET_ACCESS_KEY
-                                aws configure set region ${REGION}
-
-                                kubectl apply -f ${yamlDir}${yamlFile} --kubeconfig=\$KUBECONFIG -n prod --validate=false
-                            """
-                        }
-                    }
-                    echo "Deployment to Prod Completed"
+                    // Apply all files in the kubernetes/prod/ directory
+                    sh """
+                        kubectl --kubeconfig=/var/lib/jenkins/.kube/config apply -f kubernetes/prod/
+                    """
                 }
             }
         }
