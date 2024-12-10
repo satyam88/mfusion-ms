@@ -120,7 +120,10 @@ pipeline {
                     def yamlFile = 'kubernetes/dev/05-deployment.yaml'
 
                     // Update image tag in the deployment.yaml file
-                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
                     // Apply all files in the kubernetes/dev/ directory
                     sh """
@@ -149,7 +152,10 @@ pipeline {
                     def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
 
                     // Pass the image tag to preprod deployment
-                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
                     // Apply all files in the kubernetes/preprod/ directory
                     sh """
@@ -169,7 +175,10 @@ pipeline {
                     def yamlFile = 'kubernetes/prod/05-deployment.yaml'
 
                     // Pass the image tag to prod deployment
-                    sh "sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}"
+                    sh """
+                        sed -i 's|<latest>|${IMAGE_TAG}|g' ${yamlFile}
+                        cat ${yamlFile} | grep ${IMAGE_TAG} || echo "Replacement failed in ${yamlFile}"
+                    """
 
                     // Apply all files in the kubernetes/prod/ directory
                     sh """
