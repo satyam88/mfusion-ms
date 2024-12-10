@@ -11,7 +11,7 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   rules:
-    - host: mfusion-ms.connectingclouds.in
+    - host: dev-mfusion-ms.connectingclouds.in
       http:
         paths:
           - pathType: Prefix
