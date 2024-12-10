@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: dev-fusion-ms-service
+  name: dev-mfusion-ms-service
   namespace: dev
   labels:
     env: dev
-    app: fusion-ms
+    app: mfusion-ms
     layer: frontend
 spec:
   type: NodePort
   selector:
-    app: fusion-ms
+    app: mfusion-ms
   ports:
     - name: api
       port: 8080
