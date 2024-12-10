@@ -1,9 +1,8 @@
 pipeline {
-
     agent any
-      triggers {
-         githubPush()
-       }
+    triggers {
+        githubPush()
+    }
     environment {
         AWS_ACCOUNT_ID = "533267238276"
         REGION = "ap-south-1"
@@ -31,43 +30,43 @@ pipeline {
             stages {
                 stage('Code Compilation') {
                     steps {
-                        echo 'Code Compilation is In Progress!'
+                        echo 'Code Compilation in Progress!'
                         sh 'mvn clean compile'
-                        echo 'Code Compilation is Completed Successfully!'
+                        echo 'Code Compilation Completed!'
                     }
                 }
 
                 stage('Code QA Execution') {
                     steps {
-                        echo 'JUnit Test Case Check in Progress!'
+                        echo 'JUnit Test Execution in Progress!'
                         sh 'mvn clean test'
-                        echo 'JUnit Test Case Check Completed!'
+                        echo 'JUnit Test Execution Completed!'
                     }
                 }
 
                 stage('Code Package') {
                     steps {
-                        echo 'Creating WAR Artifact'
+                        echo 'Packaging Code into WAR Artifact'
                         sh 'mvn clean package'
-                        echo 'Artifact Creation Completed'
+                        echo 'WAR Artifact Created Successfully!'
                     }
                 }
 
-                stage('Building & Tag Docker Image') {
+                stage('Build & Tag Docker Image') {
                     steps {
-                        echo "Starting Building Docker Image: ${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG}"
+                        echo "Building Docker Image: ${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG}"
                         sh "docker build -t ${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG} ."
-                        echo 'Docker Image Build Completed'
+                        echo 'Docker Image Built Successfully!'
                     }
                 }
 
-                stage('Docker Image Push to Amazon ECR') {
+                stage('Push Docker Image to Amazon ECR') {
                     steps {
                         echo "Pushing Docker Image to ECR: ${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG}"
                         withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
                             sh "docker push ${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG}"
                         }
-                        echo "Docker Image Push to ECR Completed"
+                        echo 'Docker Image Pushed to ECR Successfully!'
                     }
                 }
             }
@@ -82,35 +81,24 @@ pipeline {
             }
             steps {
                 script {
-                    if (env.BRANCH_NAME == 'preprod') {
-                        def devImage = "${ECR_URL}/mfusion-ms:${DEV_IMAGE_TAG}"
-                        def preprodImage = "${ECR_URL}/mfusion-ms:${PREPROD_IMAGE_TAG}"
+                    def targetTag = BRANCH_NAME == 'preprod' ? PREPROD_IMAGE_TAG : "prod-mfusion-ms-v.1.${BUILD_NUMBER}"
+                    def sourceTag = BRANCH_NAME == 'preprod' ? DEV_IMAGE_TAG : PREPROD_IMAGE_TAG
+                    def sourceImage = "${ECR_URL}/mfusion-ms:${sourceTag}"
+                    def targetImage = "${ECR_URL}/mfusion-ms:${targetTag}"
 
-                        echo "Pulling Dev Image: ${devImage}"
-                        withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                            sh "docker pull ${devImage}"
-                            echo "Tagging Dev Image as Preprod: ${preprodImage}"
-                            sh "docker tag ${devImage} ${preprodImage}"
-                            echo "Pushing Preprod Image to ECR: ${preprodImage}"
-                            sh "docker push ${preprodImage}"
+                    echo "Pulling Source Image: ${sourceImage}"
+                    withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
+                        def pullStatus = sh(script: "docker pull ${sourceImage}", returnStatus: true)
+                        if (pullStatus != 0) {
+                            error("Source image ${sourceImage} does not exist or failed to pull.")
                         }
-                        echo "Deleting Local Images"
-                        sh "docker rmi ${devImage} ${preprodImage} || true"
-                    } else if (env.BRANCH_NAME == 'prod') {
-                        def preprodImage = "${ECR_URL}/mfusion-ms:${PREPROD_IMAGE_TAG}"
-                        def prodImage = "${ECR_URL}/mfusion-ms:prod-mfusion-ms-v.1.${BUILD_NUMBER}"
-
-                        echo "Pulling Preprod Image: ${preprodImage}"
-                        withDockerRegistry([credentialsId: 'ecr:ap-south-1:ecr-credentials', url: "https://${ECR_URL}"]) {
-                            sh "docker pull ${preprodImage}"
-                            echo "Tagging Preprod Image as Prod: ${prodImage}"
-                            sh "docker tag ${preprodImage} ${prodImage}"
-                            echo "Pushing Prod Image to ECR: ${prodImage}"
-                            sh "docker push ${prodImage}"
-                        }
-                        echo "Deleting Local Images"
-                        sh "docker rmi ${preprodImage} ${prodImage} || true"
+                        echo "Tagging Source Image as Target: ${targetImage}"
+                        sh "docker tag ${sourceImage} ${targetImage}"
+                        echo "Pushing Target Image to ECR: ${targetImage}"
+                        sh "docker push ${targetImage}"
                     }
+                    echo "Cleaning Up Local Images"
+                    sh "docker rmi ${sourceImage} ${targetImage} || true"
                 }
             }
         }
@@ -121,7 +109,7 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    echo "Deploying to Dev Environment"
                     def yamlFile = 'kubernetes/dev/05-deployment.yaml'
 
                     sh """
@@ -139,7 +127,7 @@ pipeline {
                             kubectl --kubeconfig=/var/lib/jenkins/.kube/config rollout restart deployment dev-mfusion-ms-deployment -n dev
                         """
                     } else {
-                        echo "No changes in ConfigMap, skipping pod restart"
+                        echo "No ConfigMap Changes, Skipping Pod Restart"
                     }
                 }
             }
@@ -151,7 +139,7 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    echo "Deploying to Preprod Environment"
                     def yamlFile = 'kubernetes/preprod/05-deployment.yaml'
 
                     sh """
@@ -171,7 +159,7 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Current Branch: ${env.BRANCH_NAME}"
+                    echo "Deploying to Prod Environment"
                     def yamlFile = 'kubernetes/prod/05-deployment.yaml'
 
                     sh """
