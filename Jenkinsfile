@@ -131,12 +131,14 @@ pipeline {
                     """
 
                     // Check if 06-configmap.yaml has changed, and restart pods if needed
-                    def configMapChanges = sh(script: "git diff --name-only HEAD~1 | grep 'kubernetes/dev/06-configmap.yaml'", returnStatus: true)
-                    if (configMapChanges == 0) {
+                    def configMapChanged = sh(script: "git diff --name-only HEAD~1 | grep -q 'kubernetes/dev/06-configmap.yaml'", returnStatus: true)
+                    if (configMapChanged == 0) {
                         echo "ConfigMap changed, restarting pods"
                         sh """
-                            kubectl --kubeconfig=/var/lib/jenkins/.kube/config rollout restart deployment <your-deployment-name> -n <namespace>
+                            kubectl --kubeconfig=/var/lib/jenkins/.kube/config rollout restart deployment dev-mfusion-ms-deployment -n dev
                         """
+                    } else {
+                        echo "No changes in ConfigMap, skipping pod restart"
                     }
                 }
             }
